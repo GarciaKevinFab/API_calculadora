@@ -4,14 +4,13 @@ import numpy as np
 from sympy import symbols, integrate
 from sympy.parsing.latex import parse_latex
 
-from calculadora import expr_parabola_canonica, genera_puntos  # tu módulo de helpers
-
 app = FastAPI()
 
 class RequestData(BaseModel):
+    equation: str   | None = None
+    a:        float | None = None
     altura:   float | None = None
     ancho:    float
-    equation: str   | None = None
 
 class ResponseData(BaseModel):
     equation:   str
@@ -22,26 +21,30 @@ class ResponseData(BaseModel):
 def calcular(data: RequestData):
     try:
         if data.ancho is None:
-            raise ValueError("El campo 'ancho' es obligatorio")
+            raise ValueError("'ancho' es obligatorio")
         W = data.ancho
         x = symbols('x')
 
-        # 1) Ecuación LaTeX
+        # 1) Modo LaTeX
         if data.equation:
-            # parse_latex maneja \frac, exponentes, raíces, etc.
-            expr = parse_latex(data.equation)
+            expr    = parse_latex(data.equation)
             eq_text = f"y(x) = {data.equation}"
 
-        # 2) Parábola canónica con altura+ancho
+        # 2) Modo parámetro: 'a' o derivar desde 'altura'
         else:
-            if data.altura is None:
-                raise ValueError("Debes enviar 'altura' si no usas 'equation'")
-            H = data.altura
-            expr, eq_text = expr_parabola_canonica(H, W)
+            if data.a is not None:
+                a = data.a
+            elif data.altura is not None:
+                a = -4 * data.altura / (W**2)
+            else:
+                raise ValueError("Debes enviar 'equation' o el coeficiente 'a' o la 'altura'")
+            expr    = a * x**2
+            eq_text = f"y(x) = {a:.4f}·x²"
 
-        # 3) Integración y puntos
+        # Cálculo de área y puntos
         area = float(integrate(expr, (x, -W/2, W/2)))
-        pts  = genera_puntos(expr, W, num=50)
+        xs   = np.linspace(-W/2, W/2, 50)
+        pts  = [(float(xi), float(expr.subs(x, xi)), 0.0) for xi in xs]
 
         return {
             "equation":   eq_text,
@@ -50,5 +53,4 @@ def calcular(data: RequestData):
         }
 
     except Exception as e:
-        # Devuelve 400 con el mensaje de error de Sympy o tus validaciones
         raise HTTPException(status_code=400, detail=str(e))
