@@ -1,3 +1,4 @@
+import re
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import numpy as np
@@ -17,16 +18,17 @@ from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,
 )
 
-# Combinamos los transformadores
-_transformations = standard_transformations + (implicit_multiplication_application,)
+_transformations = standard_transformations + (
+    implicit_multiplication_application,
+)
 
 app = FastAPI()
 
 class RequestData(BaseModel):
-    equation: str   | None = None  # LaTeX o texto
-    a:        float | None = None  # coeficiente
-    altura:   float | None = None  # altura H
-    ancho:    float             # ancho W
+    equation: str   | None = None
+    a:        float | None = None
+    altura:   float | None = None
+    ancho:    float
 
 class ResponseData(BaseModel):
     equation:   str
@@ -42,50 +44,59 @@ def calcular(data: RequestData):
         if data.equation:
             raw = data.equation.strip()
 
-            # Caso implicita con '='
+            # Si hay “=”, lo resolvemos implícito
             if '=' in raw:
                 left, right = raw.split('=', 1)
 
-                # Parseamos cada lado según el caso
+                def _prepare(s: str) -> str:
+                    # 1) caret -> **
+                    t = s.replace('^','**')
+                    # 2) inyectar "*" entre dígito y letra: 12x -> 12*x, y2 -> y*2
+                    t = re.sub(r'(?<=\d)(?=[A-Za-z])', '*', t)
+                    t = re.sub(r'(?<=[A-Za-z])(?=\d)', '*', t)
+                    return t
+
                 if _can_parse_latex and '\\' in raw:
                     L = parse_latex(left)
                     R = parse_latex(right)
                 else:
-                    # reemplazamos '^' por '**' y permitimos '6x' => '6*x'
-                    L = parse_expr(left.replace('^','**'), transformations=_transformations)
-                    R = parse_expr(right.replace('^','**'), transformations=_transformations)
+                    L = parse_expr(_prepare(left),
+                                   transformations=_transformations)
+                    R = parse_expr(_prepare(right),
+                                   transformations=_transformations)
 
-                # Ecuación L - R = 0
                 eq0 = L - R
                 sols = sp.solve(eq0, y)
                 if not sols:
-                    raise ValueError("No pude despejar 'y' de la ecuación")
+                    raise ValueError("No pude despejar 'y'")
                 expr = sols[0]
                 eq_text = f"y(x) = {sp.sstr(expr)}"
 
             else:
-                # Función explícita sin '='
+                # función directa, sin “=”
                 if _can_parse_latex and '\\' in raw:
                     expr = parse_latex(raw)
                 else:
-                    expr = parse_expr(raw.replace('^','**'), transformations=_transformations)
+                    prepared = re.sub(r'(?<=\d)(?=[A-Za-z])', '*',
+                              raw.replace('^','**'))
+                    prepared = re.sub(r'(?<=[A-Za-z])(?=\d)', '*', prepared)
+                    expr = parse_expr(prepared,
+                                      transformations=_transformations)
                 eq_text = f"y(x) = {raw}"
 
         else:
             # Modo parámetro
             if data.a is not None:
-                a = data.a
-                H = 0.0
+                a, H = data.a, 0.0
             elif data.altura is not None:
                 H = data.altura
                 a = -4 * H / (W**2)
             else:
-                raise ValueError("Debes enviar 'equation', o bien 'a' o 'altura'")
-
-            expr    = a * x**2 + H
+                raise ValueError("Envía 'equation', o bien 'a' o 'altura'")
+            expr = a * x**2 + H
             eq_text = f"y(x) = {a:.4f}·x² + {H:.4f}"
 
-        # Área e puntos
+        # Integramos y generamos puntos
         area = float(sp.integrate(expr, (x, -W/2, W/2)))
         xs   = np.linspace(-W/2, W/2, 50)
         pts  = [(float(xi), float(expr.subs(x, xi)), 0.0) for xi in xs]
