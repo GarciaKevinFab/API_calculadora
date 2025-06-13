@@ -25,15 +25,15 @@ _transformations = standard_transformations + (
 app = FastAPI()
 
 class RequestData(BaseModel):
-    equation: str   | None = None
-    a:        float | None = None
-    altura:   float | None = None
-    ancho:    float
+    equation: str | None = None
+    a: float | None = None
+    altura: float | None = None
+    ancho: float
 
 class ResponseData(BaseModel):
-    equation:   str
+    equation: str
     area_total: float
-    points:     list[tuple[float,float,float]]
+    points: list[tuple[float, float, float]]
 
 def normalize_superscripts(s: str) -> str:
     """Convierte dígitos superíndice Unicode a ^n."""
@@ -54,12 +54,14 @@ def prepare_expr(s: str) -> str:
     """
     1) Normaliza superscripts.
     2) '^'→'**'
-    3) Inserta '*' entre número-letra y letra-número (12x→12*x, y2→y*2).
+    3) Inserta '*' entre número-letra y letra-número.
+    4) Convierte y' a Derivative(y, x) para EDO.
     """
     t = normalize_superscripts(s)
     t = t.replace('^', '**')
     t = re.sub(r'(?<=\d)(?=[A-Za-z])', '*', t)
     t = re.sub(r'(?<=[A-Za-z])(?=\d)', '*', t)
+    t = re.sub(r"y'", "Derivative(y, x)", t)  # Convertir y' a forma de derivada
     return t
 
 @app.post("/calcular", response_model=ResponseData)
@@ -71,7 +73,7 @@ def calcular(data: RequestData):
         if data.equation:
             raw = data.equation.strip()
 
-            # ── Ecuación implícita con '=' ─────────────────────────
+            # Ecuación implícita con '='
             if '=' in raw:
                 left, right = raw.split('=', 1)
 
@@ -79,29 +81,32 @@ def calcular(data: RequestData):
                     L = parse_latex(left)
                     R = parse_latex(right)
                 else:
-                    L = parse_expr(prepare_expr(left),
-                                   transformations=_transformations)
-                    R = parse_expr(prepare_expr(right),
-                                   transformations=_transformations)
+                    L = parse_expr(prepare_expr(left), transformations=_transformations)
+                    R = parse_expr(prepare_expr(right), transformations=_transformations)
 
                 eq0 = L - R
-                sols = sp.solve(eq0, y)
-                if not sols:
-                    raise ValueError("No pude despejar 'y'")
-                expr = sols[0]
-                eq_text = f"y(x) = {sp.sstr(expr)}"
+                # Si es una EDO, usar dsolve
+                if isinstance(eq0, sp.Derivative):
+                    solution = sp.dsolve(eq0, y)
+                    expr = solution.rhs
+                    eq_text = f"y(x) = {sp.sstr(expr)}"
+                else:
+                    sols = sp.solve(eq0, y)
+                    if not sols:
+                        raise ValueError("No pude despejar 'y'")
+                    expr = sols[0]
+                    eq_text = f"y(x) = {sp.sstr(expr)}"
 
-            # ── Función explícita sin '=' ──────────────────────────
+            # Función explícita sin '='
             else:
                 if _can_parse_latex and '\\' in raw:
                     expr = parse_latex(raw)
                 else:
-                    expr = parse_expr(prepare_expr(raw),
-                                      transformations=_transformations)
+                    expr = parse_expr(prepare_expr(raw), transformations=_transformations)
                 eq_text = f"y(x) = {raw}"
 
         else:
-            # ── Modo Parámetro ───────────────────────────────────
+            # Modo Parámetro
             if data.a is not None:
                 a, H = data.a, 0.0
             elif data.altura is not None:
@@ -110,18 +115,18 @@ def calcular(data: RequestData):
             else:
                 raise ValueError("Envía 'equation', o bien 'a' o 'altura'")
 
-            expr    = a * x**2 + H
+            expr = a * x**2 + H
             eq_text = f"y(x) = {a:.4f}·x² + {H:.4f}"
 
-        # ── Cálculo de Área y Puntos ───────────────────────────
+        # Cálculo de Área y Puntos
         area = float(sp.integrate(expr, (x, -W/2, W/2)))
-        xs   = np.linspace(-W/2, W/2, 50)
-        pts  = [(float(xi), float(expr.subs(x, xi)), 0.0) for xi in xs]
+        xs = np.linspace(-W/2, W/2, 50)
+        pts = [(float(xi), float(expr.subs(x, xi)), 0.0) for xi in xs]
 
         return {
-            "equation":   eq_text,
+            "equation": eq_text,
             "area_total": round(area, 2),
-            "points":     pts
+            "points": pts
         }
 
     except Exception as e:
