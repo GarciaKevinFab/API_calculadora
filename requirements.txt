@@ -1,4 +1,5 @@
 fastapi
-uvicorn[standard]
-sympy
+uvicorn
+sympy[parsing]           # sympy con capacidad de parsear LaTeX
 numpy
+antlr4-python3-runtime==4.11.0   # runtime ANTLR4 para parse_latex

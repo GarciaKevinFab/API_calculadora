@@ -1,8 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import numpy as np
-from sympy import symbols, integrate
-from sympy.parsing.latex import parse_latex
+import sympy as sp
+
+# Intentamos importar parse_latex; si falla, caemos en fallback
+try:
+    from sympy.parsing.latex import parse_latex
+    _can_parse_latex = True
+except ImportError:
+    _can_parse_latex = False
 
 app = FastAPI()
 
@@ -20,19 +26,28 @@ class ResponseData(BaseModel):
 @app.post("/calcular", response_model=ResponseData)
 def calcular(data: RequestData):
     try:
-        # ancho siempre obligatorio
         if data.ancho is None:
             raise ValueError("'ancho' es obligatorio")
         W = data.ancho
-        x = symbols('x')
+        x = sp.symbols('x')
 
-        # 1) Modo LaTeX puro
+        # ── MODO ECUACIÓN (LaTeX o texto) ───────────────────────
         if data.equation:
-            expr    = parse_latex(data.equation)
-            eq_text = f"y(x) = {data.equation}"
+            raw_eq = data.equation.strip()
 
-        # 2) Modo parámetro: primero 'a', luego 'altura'
+            if _can_parse_latex and '\\' in raw_eq:
+                # Si hay comandos LaTeX y el runtime está disponible
+                expr = parse_latex(raw_eq)
+            else:
+                # Fallback: texto puro, convertimos ^→** y sympify
+                raw = raw_eq.replace('^', '**')
+                expr = sp.sympify(raw)
+
+            eq_text = f"y(x) = {raw_eq}"
+
+        # ── MODO PARÁMETRO ───────────────────────────────────────
         else:
+            # Preferimos coeficiente 'a' si se proporciona
             if data.a is not None:
                 a = data.a
                 H = 0.0
@@ -40,13 +55,13 @@ def calcular(data: RequestData):
                 H = data.altura
                 a = -4 * H / (W**2)
             else:
-                raise ValueError("Debes enviar 'equation' o el coeficiente 'a' o la 'altura'")
+                raise ValueError("Debes enviar 'equation' o 'a' o 'altura'")
 
             expr    = a * x**2 + H
             eq_text = f"y(x) = {a:.4f}·x² + {H:.4f}"
 
-        # Cálculo de área e generación de puntos
-        area = float(integrate(expr, (x, -W/2, W/2)))
+        # ── CÁLCULO DE ÁREA Y PUNTOS ───────────────────────────
+        area = float(sp.integrate(expr, (x, -W/2, W/2)))
         xs   = np.linspace(-W/2, W/2, 50)
         pts  = [(float(xi), float(expr.subs(x, xi)), 0.0) for xi in xs]
 
