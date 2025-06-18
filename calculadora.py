@@ -4,7 +4,7 @@ import numpy as np
 def expr_parabola_canonica(H: float, W: float):
     """
     Retorna la expresión simplificada de la parábola en forma canónica
-    y su representación en LaTeX: y(x) = a x^2 + H.
+    y su representación en LaTeX: y(x) = a·x^2 + H.
     """
     x = sp.symbols('x')
     a = -4 * H / (W**2)
@@ -16,7 +16,7 @@ def expr_parabola_canonica(H: float, W: float):
 
 def genera_puntos(expr, W: float, num: int = 50):
     """
-    Genera una lista de puntos (x, y, 0.0) para graficar la curva
+    Genera lista de puntos (x, y, 0.0) para graficar la curva
     desde -W/2 hasta W/2.
     """
     x = sp.symbols('x')

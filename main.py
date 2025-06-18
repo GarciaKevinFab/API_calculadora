@@ -26,7 +26,7 @@ app = FastAPI()
 # ─── Habilitar CORS ─────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],            # o la lista de orígenes que quieras, ej: ["http://127.0.0.1:5500"]
+    allow_origins=["*"],            # O pon aquí tus dominios
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,43 +65,31 @@ def calcular(data: RequestData):
         W = data.ancho
         x, y = sp.symbols('x y')
 
-        # 1) Obtener la expresión
+        # ── 1) Construir la expresión
         if data.equation:
             raw = data.equation.strip()
-            if '=' in raw:
-                Ls, Rs = raw.split('=',1)
-                if _can_parse_latex and '\\' in raw:
-                    L = parse_latex(Ls); R = parse_latex(Rs)
-                else:
-                    L = parse_expr(prepare_expr(Ls), transformations=_transformations)
-                    R = parse_expr(prepare_expr(Rs), transformations=_transformations)
-                eq0 = L - R
-                if isinstance(eq0, sp.Derivative):
-                    sol = sp.dsolve(eq0, y); expr = sol.rhs
-                else:
-                    sols = sp.solve(eq0, y)
-                    if not sols:
-                        raise ValueError("No pude despejar 'y'")
-                    expr = sols[0]
+            # Sólo tomamos la parte derecha del '=' si existe
+            final = raw.split('=', 1)[-1].strip()
+            if _can_parse_latex and '\\' in final:
+                expr = parse_latex(final)
             else:
-                expr = (_can_parse_latex and '\\' in raw
-                        and parse_latex(raw)
-                        or parse_expr(prepare_expr(raw), transformations=_transformations))
+                expr = parse_expr(prepare_expr(final), transformations=_transformations)
         else:
+            # Modo parámetro
             if data.a is not None:
                 a, H = data.a, 0.0
             elif data.altura is not None:
                 H = data.altura
                 a = -4 * H / (W**2)
             else:
-                raise ValueError("Envía 'equation' o 'a' o 'altura'")
+                raise ValueError("Envía 'equation' o bien 'a' o 'altura'")
             expr = a*x**2 + H
 
-        # 2) Simplificar y generar LaTeX
+        # ── 2) Simplificar y generar LaTeX limpio
         expr_s = sp.simplify(expr)
         eq_text = r"y(x) = " + sp.latex(expr_s)
 
-        # 3) Calcular área y puntos
+        # ── 3) Área y puntos para graficar
         area = float(sp.integrate(expr_s, (x, -W/2, W/2)))
         xs = np.linspace(-W/2, W/2, 50)
         pts = [(float(xi), float(expr_s.subs(x, xi)), 0.0) for xi in xs]
@@ -113,4 +101,5 @@ def calcular(data: RequestData):
         }
 
     except Exception as e:
+        # Enviamos el detalle real del error
         raise HTTPException(status_code=400, detail=str(e))
