@@ -1,5 +1,6 @@
 import re
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
 import sympy as sp
@@ -16,9 +17,21 @@ from sympy.parsing.sympy_parser import (
     standard_transformations,
     implicit_multiplication_application,
 )
-_transformations = standard_transformations + (implicit_multiplication_application,)
+_transformations = standard_transformations + (
+    implicit_multiplication_application,
+)
 
 app = FastAPI()
+
+# ─── Habilitar CORS ─────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],            # o la lista de orígenes que quieras, ej: ["http://127.0.0.1:5500"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# ─────────────────────────────────────────────────────────────
 
 class RequestData(BaseModel):
     equation: str | None = None
@@ -52,7 +65,7 @@ def calcular(data: RequestData):
         W = data.ancho
         x, y = sp.symbols('x y')
 
-        # 1) Obtener expr
+        # 1) Obtener la expresión
         if data.equation:
             raw = data.equation.strip()
             if '=' in raw:
@@ -67,7 +80,8 @@ def calcular(data: RequestData):
                     sol = sp.dsolve(eq0, y); expr = sol.rhs
                 else:
                     sols = sp.solve(eq0, y)
-                    if not sols: raise ValueError("No pude despejar 'y'")
+                    if not sols:
+                        raise ValueError("No pude despejar 'y'")
                     expr = sols[0]
             else:
                 expr = (_can_parse_latex and '\\' in raw
@@ -83,16 +97,20 @@ def calcular(data: RequestData):
                 raise ValueError("Envía 'equation' o 'a' o 'altura'")
             expr = a*x**2 + H
 
-        # 2) Simplificar y LaTeX
+        # 2) Simplificar y generar LaTeX
         expr_s = sp.simplify(expr)
         eq_text = r"y(x) = " + sp.latex(expr_s)
 
-        # 3) Área y puntos
+        # 3) Calcular área y puntos
         area = float(sp.integrate(expr_s, (x, -W/2, W/2)))
         xs = np.linspace(-W/2, W/2, 50)
         pts = [(float(xi), float(expr_s.subs(x, xi)), 0.0) for xi in xs]
 
-        return {"equation": eq_text, "area_total": round(area,2), "points": pts}
+        return {
+            "equation": eq_text,
+            "area_total": round(area, 2),
+            "points": pts
+        }
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
