@@ -156,13 +156,10 @@ async def calcular(data: RequestData):
             if '=' not in data.equation:
                 raise ValueError("La ecuación debe contener '='")
             try:
-                # Parsear como LaTeX primero
                 expr = parse_latex(data.equation)
-                # Convertir a diferencia de lados para análisis
                 lhs, rhs = data.equation.split('=', 1)
                 expr_to_analyze = parse_expr(prepare(lhs) + " - (" + prepare(rhs) + ")", transformations=_transformations)
             except Exception:
-                # Fallback si falla el parseo LaTeX
                 lhs, rhs = data.equation.split('=', 1)
                 expr_to_analyze = parse_expr(prepare(lhs) + " - (" + prepare(rhs) + ")", transformations=_transformations)
         else:
@@ -180,20 +177,21 @@ async def calcular(data: RequestData):
                 raise ValueError("Debe enviar 'equation' o 'a' o (altura y ancho)")
             expr_to_analyze = a * x**2 - y
 
-        # Pasar la expresión a identificar
         tipo, centro, params = identify_conic(expr_to_analyze, x, y)
 
-        # Generar puntos
+        # Generar puntos, manejar soluciones complejas tomando la parte real
         xs = np.linspace(centro[0] - 5, centro[0] + 5, 200)
         ys = []
         for xi in xs:
-            sol = solve(expr_to_analyze.subs(x, xi), y)
-            yi = float(sol[0].evalf()) if sol else 0.0
-            ys.append(yi)
+            sol = solve(expr_to_analyze.subs(x, xi), y, domain=sp.S.Reals)  # Restringir a reales
+            if sol:
+                yi = float(sol[0].evalf()) if sol[0].is_real else 0.0
+                ys.append(yi)
+            else:
+                ys.append(0.0)
 
-        pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys)]
+        pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys) if yi is not None]
 
-        # Generar ecuación en LaTeX
         expr_eq = Eq(expr_to_analyze, 0)
         expr_latex = sp.latex(expr_eq)
 
