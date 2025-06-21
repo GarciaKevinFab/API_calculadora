@@ -8,8 +8,8 @@ from typing import Optional
 from sympy.parsing.sympy_parser import (
     parse_expr, standard_transformations, implicit_multiplication_application
 )
-from sympy.geometry import Conic
-from sympy import Eq
+from sympy.parsing.latex import parse_latex
+from sympy import Eq, symbols, solve, Matrix, sqrt
 
 _transformations = standard_transformations + (implicit_multiplication_application,)
 
@@ -36,65 +36,170 @@ class ResponseData(BaseModel):
     points: list[tuple[float, float, float]]
 
 def prepare(s: str) -> str:
+    """Prepara una cadena para parse_expr."""
     t = s.replace('^', '**')
     t = re.sub(r'(?<=\d)(?=[A-Za-z])', '*', t)
     t = re.sub(r'(?<=[A-Za-z])(?=\d)', '*', t)
     t = t.replace(' ', '')
     return t
 
-@app.post("/calcular", response_model=ResponseData)
-def calcular(data: RequestData):
-    try:
-        x, y = sp.symbols('x y')
+def identify_conic(expr, x, y):
+    """Identifica el tipo de sección cónica y extrae parámetros."""
+    expr = sp.expand(expr)
+    
+    # Extraer coeficientes de Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
+    A = expr.coeff(x**2)
+    B = expr.coeff(x*y)
+    C = expr.coeff(y**2)
+    D = expr.coeff(x)
+    E = expr.coeff(y)
+    F = expr.subs({x: 0, y: 0})
 
-        # Modo ecuación
+    # Convertir a floats manejando expresiones simbólicas
+    def to_float(val):
+        try:
+            return float(val.evalf()) if val != 0 else 0.0
+        except (TypeError, AttributeError):
+            return 0.0
+    A, B, C, D, E, F = map(to_float, [A, B, C, D, E, F])
+
+    # Discriminante B^2 - 4AC
+    discriminant = B**2 - 4*A*C
+
+    params = {}
+    tipo = "unknown"
+    centro = (0.0, 0.0)
+
+    # Manejar términos xy con rotación si es necesario
+    if B != 0:
+        # Rotar para eliminar xy
+        theta = sp.atan2(B, A - C) / 2
+        x_rot = x * sp.cos(theta) + y * sp.sin(theta)
+        y_rot = -x * sp.sin(theta) + y * sp.cos(theta)
+        expr_rot = expr.subs({x: x_rot, y: y_rot}).expand()
+        A = expr_rot.coeff(x**2)
+        C = expr_rot.coeff(y**2)
+        D = expr_rot.coeff(x)
+        E = expr_rot.coeff(y)
+        F = expr_rot.subs({x: 0, y: 0})
+        A, C, D, E, F = map(to_float, [A, C, D, E, F])
+        discriminant = -4*A*C  # B = 0 tras rotación
+        params['rotacion'] = float(theta)
+
+    if abs(A) < 1e-10 and abs(C) < 1e-10:
+        if abs(E) > 1e-10 or abs(D) > 1e-10:
+            tipo = "parabola"
+            # Para y = ax^2 + bx + c
+            if abs(E + 1) < 1e-10:  # Forma y = ...
+                a_parabola = A
+                b_parabola = D
+                if abs(a_parabola) > 1e-10:
+                    p = abs(1/(4*a_parabola))
+                    cx = -b_parabola/(2*a_parabola)
+                    cy = -p
+                    centro = (cx, cy)
+                    params = {
+                        "foco_distancia": p,
+                        "directriz": f"y = {cy + p}",
+                        "vertice": (cx, cy)
+                    }
+                else:
+                    params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+            else:
+                params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+    elif discriminant < -1e-10:
+        if abs(A - C) < 1e-10:
+            tipo = "circle"
+            cx = -D/(2*A) if abs(A) > 1e-10 else 0.0
+            cy = -E/(2*A) if abs(A) > 1e-10 else 0.0
+            centro = (cx, cy)
+            try:
+                radius = sqrt((D**2 + E**2 - 4*A*F)/(4*A**2))
+                params = {"centro": centro, "radio": float(radius)}
+            except (ValueError, TypeError):
+                raise ValueError("Ecuación no representa un círculo válido")
+        else:
+            tipo = "ellipse"
+            cx = -D/(2*A) if abs(A) > 1e-10 else 0.0
+            cy = -E/(2*C) if abs(C) > 1e-10 else 0.0
+            centro = (cx, cy)
+            try:
+                a_axis = sqrt(-F/A) if A != 0 and F/A < 0 else 1.0
+                b_axis = sqrt(-F/C) if C != 0 and F/C < 0 else 1.0
+                params = {"centro": centro, "ejes": [float(a_axis), float(b_axis)]}
+            except (ValueError, TypeError):
+                raise ValueError("Ecuación no representa una elipse válida")
+    elif abs(discriminant) < 1e-10:
+        tipo = "parabola"
+        cx = -D/(2*A) if abs(A) > 1e-10 else 0.0
+        cy = -E/(2*C) if abs(C) > 1e-10 else 0.0
+        centro = (cx, cy)
+        try:
+            p = abs(1/(4*A)) if abs(A) > 1e-10 else abs(1/(4*C))
+            params = {"foco_distancia": float(p), "directriz": f"y = {cy + p}"}
+        except (ValueError, TypeError):
+            params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+    elif discriminant > 1e-10:
+        tipo = "hyperbola"
+        cx = -D/(2*A) if abs(A) > 1e-10 else 0.0
+        cy = -E/(2*C) if abs(C) > 1e-10 else 0.0
+        centro = (cx, cy)
+        try:
+            a_axis = sqrt(F/A) if A != 0 and F/A > 0 else 1.0
+            b_axis = sqrt(-F/C) if C != 0 and F/C < 0 else 1.0
+            params = {"centro": centro, "ejes": [float(a_axis), float(b_axis)]}
+        except (ValueError, TypeError):
+            raise ValueError("Ecuación no representa una hipérbola válida")
+    else:
+        raise ValueError("Ecuación no representa una sección cónica válida")
+
+    return tipo, centro, params
+
+@app.post("/calcular", response_model=ResponseData)
+async def calcular(data: RequestData):
+    try:
+        x, y = symbols('x y')
+
+        # Validar entrada
         if data.equation:
             if '=' not in data.equation:
-                raise ValueError("La ecuación debe contener '='.")
-            lhs, rhs = data.equation.split('=', 1)
-            expr = parse_expr(prepare(lhs) + "-(" + prepare(rhs) + ")", transformations=_transformations)
-        # Modo parámetro (a o altura + ancho)
+                raise ValueError("La ecuación debe contener '='")
+            # Intentar parsear como LaTeX
+            try:
+                expr = parse_latex(data.equation)
+            except Exception:
+                # Fallback a texto plano
+                lhs, rhs = data.equation.split('=', 1)
+                expr = parse_expr(prepare(lhs) + "-(" + prepare(rhs) + ")", transformations=_transformations)
         else:
             if data.a is not None:
+                if abs(data.a) < 1e-10:
+                    raise ValueError("El coeficiente 'a' no puede ser cero")
                 a = data.a
             elif data.altura is not None and data.ancho is not None:
+                if abs(data.ancho) < 1e-10:
+                    raise ValueError("El ancho no puede ser cero")
+                if data.altura == 0:
+                    raise ValueError("La altura no puede ser cero")
                 a = -4 * data.altura / (data.ancho ** 2)
             else:
-                raise ValueError("Debe enviar una 'equation' o bien 'a' o (altura y ancho)")
+                raise ValueError("Debe enviar 'equation' o 'a' o (altura y ancho)")
             expr = a * x**2 - y
 
-        con = Conic(Eq(expr, 0))
-        tipo = con.conic_type
-        centro = tuple(map(float, con.center)) if hasattr(con, 'center') else (0.0, 0.0)
-        params = {}
+        # Identificar cónica
+        tipo, centro, params = identify_conic(expr, x, y)
 
-        if tipo == 'circle':
-            r = float(con.radius)
-            params = {"centro": centro, "radio": r}
-        elif tipo == 'parabola':
-            d = float(con.parameter)
-            params = {"foco_distancia": d, "directriz": str(con.directrix)}
-        elif tipo == 'ellipse':
-            a, b = float(con.a), float(con.b)
-            params = {"centro": centro, "ejes": [a, b]}
-        elif tipo == 'hyperbola':
-            a, b = float(con.a), float(con.b)
-            params = {"centro": centro, "ejes": [a, b]}
-
-        # Generar puntos Y de verdad (solución de y)
+        # Generar puntos
         xs = np.linspace(centro[0] - 5, centro[0] + 5, 200)
         ys = []
         for xi in xs:
-            sol = sp.solve(expr.subs(x, xi), y)
-            if sol:
-                yi = float(sol[0].evalf())
-                ys.append(yi)
-            else:
-                ys.append(0.0)
+            sol = solve(expr.subs(x, xi), y)
+            yi = float(sol[0].evalf()) if sol else 0.0
+            ys.append(yi)
 
         pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys)]
 
-        # Generar expresión para mostrar
+        # Generar ecuación en LaTeX
         expr_eq = Eq(expr, 0)
         expr_latex = sp.latex(expr_eq)
 
@@ -106,4 +211,8 @@ def calcular(data: RequestData):
         )
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Error al procesar: {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

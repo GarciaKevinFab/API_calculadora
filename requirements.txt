@@ -1,5 +1,6 @@
-fastapi
-uvicorn
-sympy[parsing]           # sympy con capacidad de parsear LaTeX
-numpy
-antlr4-python3-runtime==4.11.0   # runtime ANTLR4 para parse_latex
+fastapi==0.111.0
+uvicorn==0.30.6
+sympy==1.12
+numpy==1.26.4
+antlr4-python3-runtime==4.11.0
+pydantic==2.7.4
