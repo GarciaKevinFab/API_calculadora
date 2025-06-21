@@ -6,9 +6,7 @@ import numpy as np
 import sympy as sp
 from typing import Optional
 from sympy.parsing.sympy_parser import (
-    parse_expr,
-    standard_transformations,
-    implicit_multiplication_application,
+    parse_expr, standard_transformations, implicit_multiplication_application
 )
 from sympy.geometry import Conic
 from sympy import Eq
@@ -49,14 +47,13 @@ def calcular(data: RequestData):
     try:
         x, y = sp.symbols('x y')
 
-        # Si se proporciona una ecuación escrita
+        # Modo ecuación
         if data.equation:
             if '=' not in data.equation:
                 raise ValueError("La ecuación debe contener '='.")
             lhs, rhs = data.equation.split('=', 1)
             expr = parse_expr(prepare(lhs) + "-(" + prepare(rhs) + ")", transformations=_transformations)
-
-        # Si se desea generar automáticamente una parábola con a o con altura y ancho
+        # Modo parámetro (a o altura + ancho)
         else:
             if data.a is not None:
                 a = data.a
@@ -64,9 +61,8 @@ def calcular(data: RequestData):
                 a = -4 * data.altura / (data.ancho ** 2)
             else:
                 raise ValueError("Debe enviar una 'equation' o bien 'a' o (altura y ancho)")
-            expr = a * x**2 - y  # forma estándar: y = ax^2 → ax^2 - y = 0
+            expr = a * x**2 - y
 
-        # Clasificación con sympy.geometry
         con = Conic(Eq(expr, 0))
         tipo = con.conic_type
         centro = tuple(map(float, con.center)) if hasattr(con, 'center') else (0.0, 0.0)
@@ -85,13 +81,25 @@ def calcular(data: RequestData):
             a, b = float(con.a), float(con.b)
             params = {"centro": centro, "ejes": [a, b]}
 
-        # Generación de puntos para graficar
+        # Generar puntos Y de verdad (solución de y)
         xs = np.linspace(centro[0] - 5, centro[0] + 5, 200)
-        ys = [float(expr.subs({x: xi, y: 0}).evalf()) for xi in xs]
-        pts = [(float(xs[i]), ys[i], 0.0) for i in range(len(xs))]
+        ys = []
+        for xi in xs:
+            sol = sp.solve(expr.subs(x, xi), y)
+            if sol:
+                yi = float(sol[0].evalf())
+                ys.append(yi)
+            else:
+                ys.append(0.0)
+
+        pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys)]
+
+        # Generar expresión para mostrar
+        expr_eq = Eq(expr, 0)
+        expr_latex = sp.latex(expr_eq)
 
         return ResponseData(
-            equation="\\text{Ecuación: } " + sp.latex(expr),
+            equation="\\text{Ecuación: } " + expr_latex,
             tipo=tipo,
             parametros=params,
             points=pts
