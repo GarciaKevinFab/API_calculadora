@@ -36,7 +36,6 @@ class ResponseData(BaseModel):
     points: list[tuple[float, float, float]]
 
 def prepare(s: str) -> str:
-    """Prepara una cadena para parse_expr."""
     t = s.replace('^', '**')
     t = re.sub(r'(?<=\d)(?=[A-Za-z])', '*', t)
     t = re.sub(r'(?<=[A-Za-z])(?=\d)', '*', t)
@@ -44,10 +43,8 @@ def prepare(s: str) -> str:
     return t
 
 def identify_conic(expr, x, y):
-    """Identifica el tipo de sección cónica y extrae parámetros."""
     expr = sp.expand(expr)
     
-    # Extraer coeficientes de Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0
     A = expr.coeff(x**2)
     B = expr.coeff(x*y)
     C = expr.coeff(y**2)
@@ -55,7 +52,6 @@ def identify_conic(expr, x, y):
     E = expr.coeff(y)
     F = expr.subs({x: 0, y: 0})
 
-    # Convertir a floats manejando expresiones simbólicas
     def to_float(val):
         try:
             return float(val.evalf()) if val != 0 else 0.0
@@ -63,16 +59,13 @@ def identify_conic(expr, x, y):
             return 0.0
     A, B, C, D, E, F = map(to_float, [A, B, C, D, E, F])
 
-    # Discriminante B^2 - 4AC
     discriminant = B**2 - 4*A*C
 
     params = {}
     tipo = "unknown"
     centro = (0.0, 0.0)
 
-    # Manejar términos xy con rotación si es necesario
     if B != 0:
-        # Rotar para eliminar xy
         theta = sp.atan2(B, A - C) / 2
         x_rot = x * sp.cos(theta) + y * sp.sin(theta)
         y_rot = -x * sp.sin(theta) + y * sp.cos(theta)
@@ -83,14 +76,13 @@ def identify_conic(expr, x, y):
         E = expr_rot.coeff(y)
         F = expr_rot.subs({x: 0, y: 0})
         A, C, D, E, F = map(to_float, [A, C, D, E, F])
-        discriminant = -4*A*C  # B = 0 tras rotación
+        discriminant = -4*A*C
         params['rotacion'] = float(theta)
 
     if abs(A) < 1e-10 and abs(C) < 1e-10:
         if abs(E) > 1e-10 or abs(D) > 1e-10:
             tipo = "parabola"
-            # Para y = ax^2 + bx + c
-            if abs(E + 1) < 1e-10:  # Forma y = ...
+            if abs(E + 1) < 1e-10:
                 a_parabola = A
                 b_parabola = D
                 if abs(a_parabola) > 1e-10:
@@ -160,15 +152,12 @@ async def calcular(data: RequestData):
     try:
         x, y = symbols('x y')
 
-        # Validar entrada
         if data.equation:
             if '=' not in data.equation:
                 raise ValueError("La ecuación debe contener '='")
-            # Intentar parsear como LaTeX
             try:
                 expr = parse_latex(data.equation)
             except Exception:
-                # Fallback a texto plano
                 lhs, rhs = data.equation.split('=', 1)
                 expr = parse_expr(prepare(lhs) + "-(" + prepare(rhs) + ")", transformations=_transformations)
         else:
@@ -186,10 +175,8 @@ async def calcular(data: RequestData):
                 raise ValueError("Debe enviar 'equation' o 'a' o (altura y ancho)")
             expr = a * x**2 - y
 
-        # Identificar cónica
         tipo, centro, params = identify_conic(expr, x, y)
 
-        # Generar puntos
         xs = np.linspace(centro[0] - 5, centro[0] + 5, 200)
         ys = []
         for xi in xs:
@@ -199,7 +186,6 @@ async def calcular(data: RequestData):
 
         pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys)]
 
-        # Generar ecuación en LaTeX
         expr_eq = Eq(expr, 0)
         expr_latex = sp.latex(expr_eq)
 
