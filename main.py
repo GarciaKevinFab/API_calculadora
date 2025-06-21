@@ -90,15 +90,20 @@ def identify_conic(expr, x, y):
                     cx = -b_parabola/(2*a_parabola)
                     cy = -p
                     centro = (cx, cy)
+                    # Calcular puntos de corte con el eje X (y = 0)
+                    puntos_corte_x = solve(expr.subs(y, 0), x)
+                    puntos_corte = [(float(p.evalf()), 0.0) for p in puntos_corte_x if p.is_real]
                     params = {
                         "foco_distancia": p,
                         "directriz": f"y = {cy + p}",
-                        "vertice": (cx, cy)
+                        "vertice": (cx, cy),
+                        "puntos_corte": puntos_corte if puntos_corte else "No hay puntos de corte reales",
+                        "discriminante": float(discriminant)  # Agregar discriminante
                     }
                 else:
-                    params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+                    params = {"foco_distancia": 0.0, "directriz": "indefinida", "puntos_corte": "No hay puntos de corte reales", "discriminante": float(discriminant)}
             else:
-                params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+                params = {"foco_distancia": 0.0, "directriz": "indefinida", "puntos_corte": "No hay puntos de corte reales", "discriminante": float(discriminant)}
     elif discriminant < -1e-10:
         if abs(A - C) < 1e-10:
             tipo = "circle"
@@ -128,9 +133,12 @@ def identify_conic(expr, x, y):
         centro = (cx, cy)
         try:
             p = abs(1/(4*A)) if abs(A) > 1e-10 else abs(1/(4*C))
-            params = {"foco_distancia": float(p), "directriz": f"y = {cy + p}"}
+            # Calcular puntos de corte con el eje X (y = 0)
+            puntos_corte_x = solve(expr.subs(y, 0), x)
+            puntos_corte = [(float(p.evalf()), 0.0) for p in puntos_corte_x if p.is_real]
+            params = {"foco_distancia": float(p), "directriz": f"y = {cy + p}", "puntos_corte": puntos_corte if puntos_corte else "No hay puntos de corte reales", "discriminante": float(discriminant)}
         except (ValueError, TypeError):
-            params = {"foco_distancia": 0.0, "directriz": "indefinida"}
+            params = {"foco_distancia": 0.0, "directriz": "indefinida", "puntos_corte": "No hay puntos de corte reales", "discriminante": float(discriminant)}
     elif discriminant > 1e-10:
         tipo = "hyperbola"
         cx = -D/(2*A) if abs(A) > 1e-10 else 0.0
@@ -156,10 +164,13 @@ async def calcular(data: RequestData):
             if '=' not in data.equation:
                 raise ValueError("La ecuación debe contener '='")
             try:
+                # Parsear como LaTeX primero
                 expr = parse_latex(data.equation)
+                # Convertir a diferencia de lados para análisis
                 lhs, rhs = data.equation.split('=', 1)
                 expr_to_analyze = parse_expr(prepare(lhs) + " - (" + prepare(rhs) + ")", transformations=_transformations)
             except Exception:
+                # Fallback si falla el parseo LaTeX
                 lhs, rhs = data.equation.split('=', 1)
                 expr_to_analyze = parse_expr(prepare(lhs) + " - (" + prepare(rhs) + ")", transformations=_transformations)
         else:
@@ -179,11 +190,11 @@ async def calcular(data: RequestData):
 
         tipo, centro, params = identify_conic(expr_to_analyze, x, y)
 
-        # Generar puntos, manejar soluciones complejas tomando la parte real
+        # Generar puntos
         xs = np.linspace(centro[0] - 5, centro[0] + 5, 200)
         ys = []
         for xi in xs:
-            sol = solve(expr_to_analyze.subs(x, xi), y, domain=sp.S.Reals)  # Restringir a reales
+            sol = solve(expr_to_analyze.subs(x, xi), y, domain=sp.S.Reals)
             if sol:
                 yi = float(sol[0].evalf()) if sol[0].is_real else 0.0
                 ys.append(yi)
@@ -192,6 +203,7 @@ async def calcular(data: RequestData):
 
         pts = [(float(xi), float(yi), 0.0) for xi, yi in zip(xs, ys) if yi is not None]
 
+        # Generar ecuación en LaTeX
         expr_eq = Eq(expr_to_analyze, 0)
         expr_latex = sp.latex(expr_eq)
 
